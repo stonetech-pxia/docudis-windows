@@ -10,9 +10,8 @@
 #
 # Files already in place with the right SHA-256 are kept, so copying a model
 # downloaded elsewhere into the destination first skips the download.
-# Downloading needs `pip install huggingface_hub`, and xlmr_ner_docudis is a
-# private repo: run `huggingface-cli login` once. PYTHON selects the
-# interpreter (default python3).
+# Downloading needs `pip install huggingface_hub`; the model repositories are
+# public. PYTHON selects the interpreter (default python3).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"

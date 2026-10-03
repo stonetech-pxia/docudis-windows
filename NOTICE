@@ -2,8 +2,7 @@ Docudis Desktop
 Copyright 2026 stonetech
 
 Docudis Desktop is licensed under the GNU Affero General Public License,
-version 3 (see LICENSE). A commercial license is available from stonetech:
-stonetechdigital@gmail.com
+version 3 (see LICENSE).
 
 The app bundles native libraries built from docudis-core and docudis-ner,
 which are licensed under Apache-2.0. Both include software derived from

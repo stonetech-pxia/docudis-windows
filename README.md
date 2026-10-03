@@ -10,6 +10,10 @@ Docudis 的 Windows 版（Flutter Desktop，同一份代码也能在 macOS 上�
 
 所有处理都在本机完成，没有账户、统计或崩溃上报。macOS 版运行在没有联网权限的 App 沙盒里，并有一个审计脚本记录 App 的全部网络活动。Windows 版由测试检查代码、依赖和打包的文件里没有联网的部分，并在运行中确认 App 没开任何网络连接；ONNX Runtime 从源码编译，不带遥测。具体承诺、数据存放位置、验证方法和审计结果见 [docs/network-audit.md](docs/network-audit.md)。
 
+## Code signing policy
+
+Windows 版由 GitHub Actions 从打了 tag 的源码构建，附 SHA-256 和构建来源证明；签名计划、会签哪些文件、团队角色和隐私声明见 [Code signing policy](docs/code-signing-policy.md)。
+
 ## 目前能做的
 
 桌面式的界面，颜色沿用 Android 的 Clay：
@@ -37,7 +41,8 @@ lib/
     ui/               工作区（原文、匿名化结果、检测结果）、还原、历史页面
 packages/docudis_pdf/ PDF 匿名化（从 docudis-android 复制）
 tool/                 原生库构建、模型安装、版本锁定、联网审计
-docs/                 不联网、不上传的说明和审计结果
+docs/                 不联网、不上传的说明和审计结果，code signing policy
+.github/workflows/    Windows 版的发布构建（GitHub Actions）
 windows/  macos/      Flutter runner
 ```
 
@@ -56,7 +61,7 @@ tool/fetch_models.sh
 ```
 
 - `prepare_native.sh` 按锁定版本拉取并编译 docudis-core（带语言识别）和 docudis-ner，下载并校验 ONNX Runtime，产物放在 `build/native/macos/`，Xcode 构建时会复制进 `Docudis.app/Contents/Frameworks`。有本地 checkout 时可以用 `DOCUDIS_CORE_SOURCE=../docudis-core` / `DOCUDIS_NER_SOURCE=../docudis-ner` 省掉克隆（必须在锁定的 commit 上）。
-- `fetch_models.sh` 把 NER 模型装到 App 沙盒容器里的 `~/Library/Containers/com.stonetech.docudis/Data/Library/Application Support/com.stonetech.docudis/models/`。容器由 macOS 在 App 第一次启动时创建，所以先 `flutter run -d macos` 打开一次再运行它。模型在私有的 Hugging Face 仓库，需要先 `huggingface-cli login`；已经有模型文件时，先复制到这个目录，脚本校验 SHA-256 通过就不会重新下载。
+- `fetch_models.sh` 把 NER 模型装到 App 沙盒容器里的 `~/Library/Containers/com.stonetech.docudis/Data/Library/Application Support/com.stonetech.docudis/models/`。容器由 macOS 在 App 第一次启动时创建，所以先 `flutter run -d macos` 打开一次再运行它。模型在公开的 Hugging Face 仓库，下载需要 `pip install huggingface_hub`；已经有模型文件时，先复制到这个目录，脚本校验 SHA-256 通过就不会重新下载。
 - 可选模型 OpenAI Privacy Filter：`tool/fetch_models.sh openai_privacy_filter`（约 950 MB，加载后约 1.6 GB 内存，每 1000 字符约多 0.3 秒）。App 会加载 `models/` 下所有已安装的模型（目前是 `xlmr_ner_docudis` 和 `openai_privacy_filter`），把它们的结果一起交给 core 合并；没装就不加载。
 - 没有模型时 App 照样能用，只是只跑规则和名单，并在页面上提示。
 
@@ -111,15 +116,19 @@ powershell -ExecutionPolicy Bypass -File tool\package_windows.ps1 -ModelsDir "$e
 ## 在 Windows 上使用
 
 1. 下载 `docudis-<版本>-windows-x64.zip`，核对 SHA-256 和发布页写的一致：`Get-FileHash docudis-<版本>-windows-x64.zip`。
-2. 解压到任意位置，运行里面的 `docudis.exe`。不用安装，也不需要管理员权限；删掉文件夹就是卸载，记录和设置在 `%APPDATA%\stonetech\Docudis\`。
-3. 程序没有代码签名，第一次打开时 Windows 可能提示"Windows 已保护你的电脑"：点"更多信息"，再点"仍要运行"。
+2. 解压到任意位置，运行里面的 `docudis.exe`。不用安装，也不需要管理员权限，程序不改系统设置。
+3. 程序没有代码签名，第一次打开时 Windows 可能提示"Windows 已保护你的电脑"：点"更多信息"，再点"仍要运行"。发布方式、签名计划和团队角色见 [Code signing policy](docs/code-signing-policy.md)。
 4. 想让 Windows 防火墙也拦住它，可以选做一条规则，见 [docs/network-audit.md](docs/network-audit.md#用防火墙再加一道保险可选)。
+
+### 卸载
+
+1. 退出 Docudis，删掉解压出来的文件夹。
+2. 删掉 `%APPDATA%\stonetech\Docudis\`：这里是记录（明文）、词典、设置和另外安装的模型。只想清掉记录，也可以先在设置里点"清除本机数据"。
+3. 加过防火墙规则的，在管理员 PowerShell 里删掉它：`Remove-NetFirewallRule -DisplayName "Docudis - block outbound"`。
 
 ## 许可证
 
 [GNU AGPL-3.0](LICENSE)，版权归 stonetech 所有，见 [NOTICE](NOTICE)。打包进 App 的 docudis-core 和 docudis-ner 原生库是 Apache-2.0。设置页的「开源许可」列出 App 所用第三方软件的许可证，由 `tool/generate_licenses.py` 生成。
-
-需要不受 AGPL 约束的商业授权，请联系 stonetechdigital@gmail.com。
 
 ## 参与
 

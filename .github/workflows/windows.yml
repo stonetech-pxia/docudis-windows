@@ -1,0 +1,92 @@
+# Builds the Windows zip from source: the native libraries at the revisions
+# in tool/native.lock.json (ONNX Runtime included, without telemetry), the
+# app, and the shipped NER model. A tag v<version> (matching pubspec.yaml)
+# also gets a build provenance attestation and a draft release; publishing
+# it stays a manual step. Third-party actions are pinned to commits.
+name: Windows
+
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 240
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: 3.47.4
+          channel: stable
+
+      - name: Check the tag matches pubspec.yaml
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path pubspec.yaml -Pattern '^version:\s*([^+\s]+)').Matches[0].Groups[1].Value
+          if ("${{ github.ref_name }}" -ne "v$version") { throw "tag ${{ github.ref_name }} does not match version $version" }
+
+      # The ONNX Runtime build takes the longest; reuse it while the lock
+      # file is unchanged.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/native-cache/ort/*-build/Release/Release/onnxruntime.dll
+          key: ort-windows-x64-${{ hashFiles('tool/native.lock.json') }}
+
+      - name: Build the native libraries
+        shell: pwsh
+        run: tool\prepare_native.ps1
+
+      - name: Fetch the NER model
+        shell: pwsh
+        run: |
+          python -m pip install --quiet huggingface_hub
+          $rev = (Get-Content -Raw tool\native.lock.json | ConvertFrom-Json).docudis_ner.revision
+          python "build\native-cache\src\docudis-ner-$rev\tool\fetch_models.py" --dest build\models
+          if ($LASTEXITCODE -ne 0) { throw "fetch_models.py failed" }
+
+      - name: Build and package
+        shell: pwsh
+        run: tool\package_windows.ps1 -ModelsDir build\models
+
+      - name: Test
+        run: flutter test
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docudis-windows-x64
+          path: build/package/*.zip*
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          subject-path: build/package/*.zip
+
+      - name: Draft the release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip = Get-Item build\package\*.zip
+          $sha = (Get-Content "$($zip.FullName).sha256").Split(' ')[0]
+          $notes = @"
+          Windows x64, unpack and run docudis.exe. SHA-256 of $($zip.Name): ``$sha``
+
+          Built by GitHub Actions from this tag; check it with ``gh attestation verify $($zip.Name) -R ${{ github.repository }}``.
+
+          - [Code signing policy](https://github.com/${{ github.repository }}/blob/main/docs/code-signing-policy.md)
+          - [No network, no upload: what it covers and how it is checked](https://github.com/${{ github.repository }}/blob/main/docs/network-audit.md)
+          "@
+          gh release create "${{ github.ref_name }}" --draft --title "Docudis ${{ github.ref_name }}" --notes $notes $zip.FullName "$($zip.FullName).sha256"
